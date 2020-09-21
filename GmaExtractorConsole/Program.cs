@@ -142,24 +142,26 @@ namespace GmaExtractorConsole
                                     else
                                         continue;
                                 }
-
-                                long localAddonId = 1;
-                                foreach (var addon in extractDatas)
+                                else
                                 {
-                                    Workshop.AddonData workshopData = Workshop.GetAddonData(addon.AddonUid);
-                                    string addonName = addon.AddonFileName;
-
-                                    if (workshopData.Uid != string.Empty)
-                                        addonName = workshopData.Title;
-
-                                    string checkValue = value.ToLower().Replace("*", @"(.*)");
-                                    if (new Regex(@$"(.*){checkValue}(.*)", RegexOptions.IgnoreCase).IsMatch(addonName.ToLower()))
+                                    long localAddonId = 1;
+                                    foreach (var addon in extractDatas)
                                     {
-                                        value = Convert.ToString(localAddonId);
-                                        break;
-                                    }
+                                        Workshop.AddonData workshopData = Workshop.GetAddonData(addon.AddonUid);
+                                        string addonName = addon.AddonFileName;
 
-                                    localAddonId++;
+                                        if (workshopData.Uid != string.Empty)
+                                            addonName = workshopData.Title;
+
+                                        string checkValue = value.ToLower().Replace("*", @"(.*)");
+                                        if (new Regex(@$"(.*){checkValue}(.*)", RegexOptions.IgnoreCase).IsMatch(addonName.ToLower()))
+                                        {
+                                            value = Convert.ToString(localAddonId);
+                                            break;
+                                        }
+
+                                        localAddonId++;
+                                    }
                                 }
                             }
 
