@@ -2,36 +2,26 @@
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.Collections.Specialized;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.Serialization.Formatters.Binary;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
+using System.Web;
 
 namespace GmaExtractorConsole
 {
     class Program
     {
-      
-        public class Config
-        {
-            public string BinPath;
-            public string ContentPath;
-            //public string SevenZipExePath;
-            public string ExtractPath;
-        }
-
-        private static string CurrentDirectoryPath = null;
+        private static Process GmadExe = null;
 
         static void Main(string[] args)
         {
-            CurrentDirectoryPath = System.AppDomain.CurrentDomain.BaseDirectory;
+            AppDomain.CurrentDomain.ProcessExit += new EventHandler(ProcessExitEvent);
 
-            if (File.Exists(CurrentDirectoryPath + "\\windowsdesktop-runtime-3.1.1-win-x64.exe"))
-                File.Delete(CurrentDirectoryPath + "\\windowsdesktop-runtime-3.1.1-win-x64.exe");
-
-            InitConfig();
-
+            Extractor.InitConfig();
             Extractor.ParseDirectory();
 
             if (args.Length != 0)
@@ -43,14 +33,16 @@ namespace GmaExtractorConsole
                     FileAttributes attr = File.GetAttributes(path);
                     if ((attr & FileAttributes.Directory) == FileAttributes.Directory)
                     {
-                        if (int.TryParse(Path.GetFileName(path), out _))
-                        {
-                            Extractor.ExtractSingle(Convert.ToInt32(Path.GetFileName(path)));
-                        }
+                        string FileName = Path.GetFileName(path);
+                        if (int.TryParse(FileName, out _))
+                            GmadExe = Extractor.ExtractSingle(FileName);
                     }
                     else
-                        Extractor.ExtractSingleFile(path);
+                        GmadExe = Extractor.ExtractSingleFile(path);
                 }
+
+                Console.WriteLine("Press any button to close the application.");
+                Console.ReadLine();
             }
             else
             {
@@ -68,8 +60,8 @@ namespace GmaExtractorConsole
 
                     Console.Clear();
 
-                    if (int.TryParse(command, out _))
-                        switch (Convert.ToInt32(command))
+                    if (long.TryParse(command, out _))
+                        switch (Convert.ToInt64(command))
                         {
                             case 1:
                                 ViewAddons();
@@ -92,20 +84,26 @@ namespace GmaExtractorConsole
             bool IsBack = false;
 
             List<Extractor.ExtractData> extractDatas = Extractor.GetContentData();
+            List<string[]> AddonWhiteList = new List<string[]>();
 
             while (IsBack == false)
             {
-                int addon_id = 1;
+                long addonId = 1;
                 foreach (var addon in extractDatas)
                 {
-                    Workshop.AddonData workshop_data = Workshop.GetAddonData(addon.AddonUid);
+                    Workshop.AddonData workshopData = Workshop.GetAddonData(addon.AddonUid);
 
-                    if (workshop_data.Uid == 0)
-                        Console.WriteLine($"  {addon_id} - ({addon.AddonUid}) - " + addon.AddonFileName);
+                    if (workshopData.Uid == string.Empty)
+                        Console.WriteLine($"  {addonId} - ({addon.AddonUid}) - " + addon.AddonFileName);
                     else
-                        Console.WriteLine($"  {addon_id} - ({addon.AddonUid}) - " + workshop_data.Title);
+                        Console.WriteLine($"  {addonId} - ({addon.AddonUid}) - " + workshopData.Title);
 
-                    addon_id++;
+                    AddonWhiteList.Add(new string[]
+                    {
+                        Convert.ToString(addonId), addon.AddonUid
+                    });
+
+                    addonId++;
                 }
 
                 Console.WriteLine("  0 - Back");
@@ -119,21 +117,56 @@ namespace GmaExtractorConsole
                 {
                     try
                     {
-                        List<string> bad_ids = new List<string>();
+                        List<string> duplicatesId = new List<string>();
                         command = command.Replace("  ", " ");
-                        string[] ids = command.Trim().Split(' ');
+                        string[] identifiers = command.Trim().Split(' ');
 
-                        foreach (string id in ids)
+                        foreach (string selectedId in identifiers)
                         {
-                            string _id = id.Trim();
+                            string value = selectedId.Trim();
 
-                            if (bad_ids.Exists(x => x == _id))
+                            if (duplicatesId.Exists(x => x == value))
                                 continue;
-                            
-                            bad_ids.Add(_id);
 
-                            Extractor.ExtractData extractData = extractDatas[Convert.ToInt32(_id) - 1];
-                            Extractor.ExtractSingle(extractData.AddonUid);
+                            if (!long.TryParse(value, out _))
+                            {
+                                if (new Regex(@"^(http|http(s)?://)?([\w-]+\.)+[\w-]+[.com|.in|.org]+(\[\?%&=]*)?").IsMatch(value))
+                                {
+                                    string url = value;
+                                    NameValueCollection parameters = HttpUtility.ParseQueryString(new Uri(url).Query);
+                                    string parseAddonUid = parameters.Get("id");
+
+                                    string[] GetAddongLink = AddonWhiteList.Find(x => x[1] == parseAddonUid);
+                                    if (GetAddongLink != null && GetAddongLink.Length != 0)
+                                        value = GetAddongLink[0];
+                                    else
+                                        continue;
+                                }
+
+                                long localAddonId = 1;
+                                foreach (var addon in extractDatas)
+                                {
+                                    Workshop.AddonData workshopData = Workshop.GetAddonData(addon.AddonUid);
+                                    string addonName = addon.AddonFileName;
+
+                                    if (workshopData.Uid != string.Empty)
+                                        addonName = workshopData.Title;
+
+                                    string checkValue = value.ToLower().Replace("*", @"(.*)");
+                                    if (new Regex(@$"(.*){checkValue}(.*)", RegexOptions.IgnoreCase).IsMatch(addonName.ToLower()))
+                                    {
+                                        value = Convert.ToString(localAddonId);
+                                        break;
+                                    }
+
+                                    localAddonId++;
+                                }
+                            }
+
+                            duplicatesId.Add(value);
+
+                            Extractor.ExtractData extractData = extractDatas[Convert.ToInt32(value) - 1];
+                            GmadExe = Extractor.ExtractSingle(extractData.AddonUid);
                         }
 
                         Console.Clear();
@@ -148,42 +181,10 @@ namespace GmaExtractorConsole
             }
         }
 
-        private static void InitConfig()
+        private static void ProcessExitEvent(object sender, EventArgs e)
         {
-            Config config = new Config();
-
-            if (!Directory.Exists("Config"))
-                Directory.CreateDirectory("Config");
-
-            string configJsonPath = CurrentDirectoryPath + @"\Config\config.json";
-
-            if (!File.Exists(configJsonPath))
-            {
-                config.BinPath = @"C:\SteamLibrary\steamapps\common\GarrysMod\bin";
-                config.ContentPath = @"C:\SteamLibrary\steamapps\workshop\content\4000";
-                config.ExtractPath = CurrentDirectoryPath + "\\Extract";
-
-                if (!Directory.Exists(config.ExtractPath))
-                    Directory.CreateDirectory(config.ExtractPath);
-
-                var options = new JsonSerializerOptions
-                {
-                    WriteIndented = true
-                };
-
-                var jsonString = JsonConvert.SerializeObject(config, Formatting.Indented);
-                File.WriteAllText(configJsonPath, jsonString);
-            }
-            else
-            {
-                string fileJson = File.ReadAllText(configJsonPath);
-                config = JsonConvert.DeserializeObject<Config>(fileJson);
-            }
-
-            Extractor.BinPath = config.BinPath;
-            Extractor.ContentPath = config.ContentPath;
-            Extractor.ExtractPath = config.ExtractPath;
-            Extractor.SevenZipExePath = CurrentDirectoryPath + @"\7-ZipPortable\App\7-Zip64\7z.exe";
+            if (GmadExe != null)
+                GmadExe.Close();
         }
     }
 }
